@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Our Story — Wrapped</title>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:linear-gradient(180deg,#f0fff6,#ffffff);}
+.container{max-width:1100px;margin:0 auto;padding:30px;}
+h1,h2{margin-bottom:10px;}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:15px;margin-bottom:40px;}
+.card{background:white;padding:15px;border-radius:10px;box-shadow:0 4px 15px rgba(0,0,0,0.05);}
+.value{font-size:22px;font-weight:bold;margin-top:5px;}
+.section{margin-bottom:50px;}
+#wordStatsBlock{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;}
+.wordCard{background:#e6fff2;padding:10px;border-radius:8px;text-align:center;}
+footer{text-align:center;color:#888;margin-top:50px;}
+.chart-container{min-height:280px;margin-top:15px;}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Our Story — Wrapped</h1>
+
+<div class="cards">
+  <div class="card"><div>Первое сообщение</div><div id="firstDate" class="value"></div></div>
+  <div class="card"><div>Дней вместе</div><div id="daysTogether" class="value"></div></div>
+  <div class="card"><div>Всего сообщений</div><div id="totalMessages" class="value"></div></div>
+  <div class="card"><div>❤️ Сердечки</div><div id="heartCount" class="value"></div></div>
+  <div class="card"><div>«Люблю»</div><div id="lyubCount" class="value"></div></div>
+  <div class="card"><div>Ночных сообщений</div><div id="nightCount" class="value"></div></div>
+</div>
+
+<div class="section">
+<h2>График сообщений по месяцам</h2>
+<div id="monthlyChart" class="chart-container"></div>
+</div>
+
+<div class="section">
+<h2>Баланс общения</h2>
+<div id="balancePie" class="chart-container"></div>
+</div>
+
+<div class="section">
+<h2>Средняя длина сообщений</h2>
+<div id="avgLengthChart" class="chart-container"></div>
+</div>
+
+<div class="section">
+<h2>Heatmap по часам и дням недели</h2>
+<div id="heatmapChart" class="chart-container"></div>
+</div>
+
+<div class="section">
+<h2>Активность по дням недели</h2>
+<div id="weekdayChart" class="chart-container"></div>
+</div>
+
+<div class="section">
+<h2>Топ-15 слов</h2>
+<div id="topWordsChart" class="chart-container"></div>
+</div>
+
+<div class="section">
+<h2>Анализ слов</h2>
+<div id="wordStatsBlock"></div>
+<div style="margin-top:15px;font-weight:bold;" id="totalSwears"></div>
+<div style="margin-top:10px;" id="swearByUser"></div>
+<div style="margin-top:10px;" id="warmIndex"></div>
+<div style="margin-top:5px;" id="toxicIndex"></div>
+</div>
+
+<footer>Сделано локально — данные никуда не отправляются</footer>
+
+<script>
+function extractText(t){if(!t)return""; if(typeof t==="string")return t; if(Array.isArray(t))return t.map(el=>typeof el==="string"?el:(el?.text?extractText(el.text):"")).join(""); return"";}
+function formatDate(d){return d.toLocaleDateString("ru-RU");}
+function toYYYYMM(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");}
+function toYYYYMMDD(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+
+async function init(){
+  const response=await fetch("result.json");
+  const data=await response.json();
+  const rows=data.messages.filter(m=>m.from&&m.date).map(m=>({from:m.from,date:new Date(m.date),text:extractText(m.text)})).sort((a,b)=>a.date-b.date);
+
+  const first=rows[0].date;
+  const last=rows[rows.length-1].date;
+  document.getElementById("firstDate").innerText=formatDate(first);
+  document.getElementById("daysTogether").innerText=Math.ceil((last-first)/(1000*60*60*24));
+  document.getElementById("totalMessages").innerText=rows.length;
+
+  const participants={};
+  const monthly={};
+  const hourly=Array.from({length:24},()=>0);
+  let heartCount=0;
+  let nightCount=0;
+  const trackedWords=["пиздец","люблю","блять","сука","дура","дурак","идиот","как дела","нахуй","привет","зай","мань"];
+  const swearWords=["пиздец","блять","сука","нахуй"];
+  const warmWords=["люблю","зай","мань"];
+  const toxicWords=["дура","дурак","идиот"];
+  const wordStats={};
+  const swearByUser={};
+  trackedWords.forEach(w=>wordStats[w]=0);
+  const lengthByUser={};
+
+  const dayOfWeekCount=[0,0,0,0,0,0,0]; // 0=Sunday
+
+  const heatMatrix=Array.from({length:7},()=>Array(24).fill(0));
+
+  rows.forEach(r=>{
+    participants[r.from]=(participants[r.from]||0)+1;
+    lengthByUser[r.from]=(lengthByUser[r.from]||[]).concat(r.text.length);
+
+    const m=toYYYYMM(r.date);
+    monthly[m]=(monthly[m]||0)+1;
+    hourly[r.date.getHours()]++;
+    if(r.date.getHours()<6) nightCount++;
+
+    const dow=r.date.getDay();
+    dayOfWeekCount[dow]++;
+    heatMatrix[dow][r.date.getHours()]++;
+
+    const txt=r.text.toLowerCase();
+    if(txt.includes("❤️")||txt.includes("❤")) heartCount++;
+    trackedWords.forEach(w=>{
+      const regex=new RegExp(w,"g");
+      const matches=txt.match(regex);
+      if(matches){
+        wordStats[w]+=matches.length;
+        if(swearWords.includes(w)) swearByUser[r.from]=(swearByUser[r.from]||0)+matches.length;
+      }
+    });
+  });
+
+  document.getElementById("heartCount").innerText=heartCount;
+  document.getElementById("lyubCount").innerText=wordStats["люблю"];
+  document.getElementById("nightCount").innerText=nightCount;
+
+  // Monthly Chart
+  Plotly.newPlot("monthlyChart",[{
+    x:Object.keys(monthly).sort(),
+    y:Object.keys(monthly).sort().map(k=>monthly[k]),
+    type:"scatter",mode:"lines+markers"
+  }],{margin:{t:30}});
+
+  // Pie
+  Plotly.newPlot("balancePie",[{
+    labels:Object.keys(participants),
+    values:Object.values(participants),
+    type:"pie"
+  }],{margin:{t:30}});
+
+  // Avg length chart
+  const avgLengthData=Object.keys(lengthByUser).map(u=>({
+    user:u,avg:Math.round(lengthByUser[u].reduce((a,b)=>a+b,0)/lengthByUser[u].length)
+  }));
+  Plotly.newPlot("avgLengthChart",[{
+    x:avgLengthData.map(d=>d.user),
+    y:avgLengthData.map(d=>d.avg),
+    type:"bar"
+  }],{margin:{t:30},yaxis:{title:"Ср. длина сообщений"}});
+
+  // Heatmap
+  Plotly.newPlot("heatmapChart",[{
+    z:heatMatrix,
+    x:[...Array(24).keys()],
+    y:["Вс","Пн","Вт","Ср","Чт","Пт","Сб"],
+    type:"heatmap",
+    colorscale:"Greens"
+  }],{margin:{t:30},xaxis:{title:"Часы"},yaxis:{title:"Дни недели"}});
+
+  // Weekday activity
+  Plotly.newPlot("weekdayChart",[{
+    x:["Вс","Пн","Вт","Ср","Чт","Пт","Сб"],
+    y:dayOfWeekCount,
+    type:"bar"
+  }],{margin:{t:30},yaxis:{title:"Сообщений"}});
+
+  // Top 15 words
+  const sortedWords=Object.keys(wordStats).map(w=>({word:w,count:wordStats[w]}))
+    .sort((a,b)=>b.count-a.count).slice(0,15);
+  Plotly.newPlot("topWordsChart",[{
+    x:sortedWords.map(d=>d.word),
+    y:sortedWords.map(d=>d.count),
+    type:"bar"
+  }],{margin:{t:30},yaxis:{title:"Количество"} });
+
+  // Word stats display
+  let html="";
+  Object.keys(wordStats).forEach(w=>{
+    html+=`<div class="wordCard"><div>${w}</div><div class="value">${wordStats[w]}</div></div>`;
+  });
+  document.getElementById("wordStatsBlock").innerHTML=html;
+
+  let totalSwears=0; swearWords.forEach(w=>totalSwears+=wordStats[w]);
+  document.getElementById("totalSwears").innerText="Всего матов: "+totalSwears;
+
+  let swearHtml="<b>Кто чаще матерится:</b><br>";
+  Object.keys(swearByUser).forEach(u=>swearHtml+=u+": "+swearByUser[u]+"<br>");
+  document.getElementById("swearByUser").innerHTML=swearHtml;
+
+  let warmIndex=0; warmWords.forEach(w=>warmIndex+=wordStats[w]);
+  let toxicIndex=0; toxicWords.forEach(w=>toxicIndex+=wordStats[w]);
+
+}
+
+init();
+</script>
+</body>
+</html>
